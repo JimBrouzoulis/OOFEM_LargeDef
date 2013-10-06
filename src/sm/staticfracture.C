@@ -37,7 +37,7 @@
 #include "dofmanager.h"
 #include "enrichmentdomain.h"
 #include "classfactory.h"
-
+#include "dynamicinputrecord.h"
 #include <vector>
 
 namespace oofem {
@@ -54,53 +54,96 @@ void
 StaticFracture :: solveYourselfAt(TimeStep *tStep)
 {
 
-    // Initiates the total displacement to zero in the UnknownsDictionary at the first time step.
-    // this must be done in order to support a dynamic equation system
-    if ( tStep->isTheFirstStep() ) {
-        printf("Initializing DofUnknownsDictionary... \n");
-        this->initializeDofUnknownsDictionary(tStep);
-    }
-    
-    // Initialization
-    int neq = this->giveNumberOfDomainEquations(1, EModelDefaultEquationNumbering()); // 1 stands for domain?
-    
-    printf("numdofs % i",neq);
-
-    if ( totalDisplacement.giveSize() != neq ) {
-        totalDisplacement.resize(neq);
-        totalDisplacement.zero();
-        incrementOfDisplacement.resize(neq);
-        incrementOfDisplacement.zero();
-        this->setTotalDisplacementFromUnknownsInDictionary(EID_MomentumBalance, VM_Total, tStep);
-    }
-    
-
-    this->setUpdateStructureFlag(false);
     NonLinearStatic :: solveYourselfAt(tStep);
 
 }
 
+#include "isolinearelasticmaterial.h"
 void 
 StaticFracture :: updateYourself(TimeStep *tStep)
 {
 
     NonLinearStatic :: updateYourself(tStep);
 
-    this->setUpdateStructureFlag( this->fMan->giveUpdateFlag() ); // if the internal structure need to be updated
+    Domain *d = this->giveDomain(1);   
+    int numMat = d->giveNumberOfMaterialModels();
 
-    // Update the UnknownsDictionary if needed
-    if ( this->needsStructureUpdate() ) {
-        printf(" Updating DofUnknownsDictionary... \n");
-        for ( int idomain = 1; idomain <= this->giveNumberOfDomains(); idomain++ ) {
-            Domain *domain = this->giveDomain(idomain);
-            int nnodes = domain->giveNumberOfDofManagers();
-            for ( int inode = 1; inode <= nnodes; inode++ ) {
-                this->updateDofUnknownsDictionary(domain->giveDofManager(inode), tStep);
-            }
+    double volFrac = 0.3;
+    double penalty = 3.0;
+    double prop = 30000;
+
+    if (tStep->isTheFirstStep() ) {
+        for (int i = 1; i < numMat; i++) {
+            designVarList.resize(numMat);
+            designVarList.at(i) = volFrac;
         }
     }
-    
 
+    double costFunction = 0.0;
+    
+    int numEl = d->giveNumberOfElements();
+    FloatMatrix Ke; 
+    FloatArray ae, help, dCostFunction(numMat);
+    for (int i = 1; i < numMat; i++)
+    {
+        Element *el = d->giveElement(i);
+        el->giveCharacteristicMatrix(Ke, SecantStiffnessMatrix, tStep);
+        el->computeVectorOf(EID_MomentumBalance, VM_Total, tStep, ae);
+        help.beProductOf(Ke,ae);
+        double temp =  ae.dotProduct(help);
+        costFunction += pow( designVarList.at(i), penalty) * temp;
+        dCostFunction.at(i) = -penalty * pow( designVarList.at(i), penalty-1.0) * temp;
+
+    }
+
+    this->optimalityCriteria(20, 20, designVarList, volFrac, dCostFunction);
+    
+    for (int i = 1; i < numMat; i++) {
+        DynamicInputRecord ir;
+        Material *mat = d->giveMaterial(i);
+        mat->giveInputRecord(ir);
+        //ir.setField(prop * pow( designVarList.at(i), penalty), _IFT_IsotropicLinearElasticMaterial_e);
+        ir.setField(prop * designVarList.at(i), _IFT_IsotropicLinearElasticMaterial_e);
+        mat->initializeFrom(&ir);
+    }
+
+    //designVarList.printYourself();
+    
+    printf("costfunction %e and sum design %e\n", costFunction, designVarList.sum());
+}
+
+void 
+StaticFracture :: optimalityCriteria(int numElX, int numElY, FloatArray &x, double volFrac, FloatArray dCostFunction)
+{
+ double l1 = 0; 
+ double l2 = 100000; 
+ double move = 0.15;
+ while (l2-l1 > 1.0e-4) {
+    double lmid = 0.5*(l2+l1);
+
+    for (int i = 1; i < x.giveSize(); i++)
+    {
+        //xnew = max(0.001,max(x-move,min(1.,min(x+move,x.*sqrt(-dc./lmid)))));
+        double temp1 = x.at(i) + move;
+        double temp2 = x.at(i) * sqrt(-dCostFunction.at(i)/lmid);
+        double temp3 = temp1 < temp2 ? temp1 : temp2;
+        temp2 = 1.0 < temp3 ? 1.0 : temp3;
+        temp1 = x.at(i) - move;
+        temp3 = temp1 > temp2 ? temp1 : temp2;
+        temp1 = 0.001 > temp3 ? 0.001 : temp3;
+        //designVarList.at(i) = max(0.001, max(x-move, min(1., min(x+move,x.*sqrt(-dCostFunction.at(i)/lmid)))));
+        x.at(i) = temp1;
+        
+    }
+    double density = x.sum();
+    if ( density - volFrac*numElX*numElY > 0 ) {
+        l1 = lmid;
+    } else {
+        l2 = lmid;
+    }
+ }
+
+ //printf("l1 and l2 %e %e \n", l1,l2);
 }
 
 // remove
@@ -108,13 +151,6 @@ void
 StaticFracture :: terminate(TimeStep *tStep)
 {
     NonLinearStatic :: terminate(tStep);
-
-
-    // Fracture/failure mechanics evaluation
-    this->fMan->evaluateYourself(tStep);
-    this->fMan->updateXFEM(tStep); // Update XFEM structure based on the fracture manager
-
- 
 }
 
 
@@ -122,73 +158,7 @@ StaticFracture :: terminate(TimeStep *tStep)
 void
 StaticFracture :: updateLoadVectors(TimeStep *tStep)
 {
-    MetaStep *mstep = this->giveMetaStep( tStep->giveMetaStepNumber() );
-    bool isLastMetaStep = ( tStep->giveNumber() == mstep->giveLastStepNumber() );
-
-    if ( controlMode == nls_indirectControl ) { //todo@: not checked 
-        #if 0
-        //if ((tStep->giveNumber() == mstep->giveLastStepNumber()) && ir->hasField("fixload")) {
-        if ( isLastMetaStep ) {
-            if ( !mstep->giveAttributesRecord()->hasField(_IFT_NonLinearStatic_donotfixload) ) {
-                OOFEM_LOG_INFO("Fixed load level\n");
-
-                //update initialLoadVector
-                if ( initialLoadVector.isEmpty() ) {
-                    initialLoadVector.resize( incrementalLoadVector.giveSize() );
-                }
-
-                incrementalLoadVector.times(loadLevel);
-                initialLoadVector.add(incrementalLoadVector);
-
-                incrementalLoadVectorOfPrescribed.times(loadLevel);
-                initialLoadVectorOfPrescribed.add(incrementalLoadVectorOfPrescribed);
-
-                incrementalLoadVector.zero();
-                incrementalLoadVectorOfPrescribed.zero();
-
-                this->loadInitFlag = 1;
-            }
-
-            //if (!mstep->giveAttributesRecord()->hasField("keepll")) this->loadLevelInitFlag = 1;
-        }
-        #endif
-
-    } else { // direct control
-        //update initialLoadVector after each step of direct control
-        //(here the loading is not proportional)
-
-        OOFEM_LOG_DEBUG("Fixed load level\n");
-
-        incrementalLoadVector.times(loadLevel);
-        if ( initialLoadVector.giveSize() != incrementalLoadVector.giveSize() ) {
-            initialLoadVector.resize( 0 );
-        }
-
-        incrementalLoadVectorOfPrescribed.times(loadLevel);
-        
-        //initialLoadVectorOfPrescribed.zero();
-        initialLoadVectorOfPrescribed.add(incrementalLoadVectorOfPrescribed);
-
-
-        incrementalLoadVector.zero();
-        incrementalLoadVectorOfPrescribed.zero();
-
-        this->loadInitFlag = 1;
-    }
-
-
-    if ( isLastMetaStep && !mstep->giveAttributesRecord()->hasField(_IFT_NonLinearStatic_donotfixload) ) {
-#ifdef VERBOSE
-        OOFEM_LOG_INFO("Reseting load level\n");
-#endif
-        if ( mstepCumulateLoadLevelFlag ) {
-            cumulatedLoadLevel += loadLevel;
-        } else {
-            cumulatedLoadLevel = 0.0;
-        }
-
-        this->loadLevel = 0.0;
-    }
+ NonLinearStatic ::updateLoadVectors(tStep);
 }
 
 

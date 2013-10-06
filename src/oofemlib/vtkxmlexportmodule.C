@@ -47,6 +47,7 @@
 //#include "xfemmanager.h"
 #include "enrichmentitem.h"
 #include "enrichmentdomain.h"
+#include "staticfracture.h"
 
 #include <string>
 #include <sstream>
@@ -1658,7 +1659,7 @@ VTKXMLExportModule :: exportCellVarAs(InternalStateType type, int region,
             continue;
         }
 #endif
-
+        StaticFracture *test;
         switch ( type ) {
 
         // Special scalars
@@ -1675,7 +1676,15 @@ VTKXMLExportModule :: exportCellVarAs(InternalStateType type, int region,
                 //valueArray.at(1) = answer.at(1); 
             }
             break;
+        case IST_DesignDensity:
+            //valueArray.at(1) = elem->giveMaterial()->give(Youngs,NULL);
+            
+            test =   dynamic_cast< StaticFracture *> ( elem->giveDomain()->giveEngngModel() );
+            valueArray.at(1) = test->designVarList.at( elem->giveNumber() );
+            break;
 
+           
+           
         // Special vectors 
         case IST_MaterialOrientation_x:
         case IST_MaterialOrientation_y:

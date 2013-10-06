@@ -82,6 +82,12 @@ public:
     virtual bool requiresEquationRenumbering(TimeStep *) { return updateStructureFlag; }
     void setUpdateStructureFlag(bool flag) { updateStructureFlag = flag; }
     bool needsStructureUpdate() {return updateStructureFlag; };
+
+
+    // new topology opt
+
+    void optimalityCriteria(int numElX, int numElY, FloatArray &designVarList, double volFrac, FloatArray dCostFunction);
+    FloatArray designVarList;
 };
 
 } // end namespace oofem

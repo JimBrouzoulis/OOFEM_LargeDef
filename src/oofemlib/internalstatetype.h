@@ -146,7 +146,8 @@ namespace oofem {
     ENUM_ITEM_WITH_VALUE(IST_CauchyStressTensor, 96) \
     ENUM_ITEM_WITH_VALUE(IST_InterfaceJump, 97) \
     ENUM_ITEM_WITH_VALUE(IST_InterfaceTraction, 98) \
-    ENUM_ITEM_WITH_VALUE(IST_InterfaceFirstPKTraction, 99) 
+    ENUM_ITEM_WITH_VALUE(IST_InterfaceFirstPKTraction, 99) \
+    ENUM_ITEM_WITH_VALUE(IST_DesignDensity, 100)
 
         
 

@@ -47,6 +47,9 @@
 
 
 namespace oofem {
+/* Young's moduli */
+#define Youngs 200
+
 /* Poissons coeficients */
 #define NYxz 300
 #define NYyz 301
