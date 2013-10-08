@@ -38,6 +38,7 @@
 #include "metastep.h"
 #include "xfemmanager.h"
 #include "fracturemanager.h"
+#include "Element.h"
 
 #define _IFT_StaticFracture_Name "staticfracture"
 
@@ -86,8 +87,13 @@ public:
 
     // new topology opt
 
-    void optimalityCriteria(int numElX, int numElY, FloatArray &designVarList, double volFrac, FloatArray dCostFunction);
+    void optimalityCriteria(int numElX, int numElY, FloatArray &x, FloatArray &dc);
     FloatArray designVarList;
+    double penalty;
+    double volFrac;
+    double min(double a, double b) { return a < b ? a : b; };
+    double max(double a, double b) { return a > b ? a : b; };
+    void costFunctionAndDerivative(Element *el, double &costFunction, double &dCostFunction, TimeStep *tStep);
 };
 
 } // end namespace oofem

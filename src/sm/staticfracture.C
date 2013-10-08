@@ -68,81 +68,102 @@ StaticFracture :: updateYourself(TimeStep *tStep)
     Domain *d = this->giveDomain(1);   
     int numMat = d->giveNumberOfMaterialModels();
 
-    double volFrac = 0.3;
-    double penalty = 3.0;
-    double prop = 30000;
-
     if (tStep->isTheFirstStep() ) {
+        // initialize parameters
+        this->penalty = 3.5;
+        this->volFrac = 0.3;
+
+        this->designVarList.resize(numMat);
         for (int i = 1; i < numMat; i++) {
-            designVarList.resize(numMat);
-            designVarList.at(i) = volFrac;
+            this->designVarList.at(i) = 1.0; //this->volFrac;
         }
     }
 
-    double costFunction = 0.0;
-    
-    int numEl = d->giveNumberOfElements();
-    FloatMatrix Ke; 
-    FloatArray ae, help, dCostFunction(numMat);
-    for (int i = 1; i < numMat; i++)
-    {
+    double cost = 0.0;
+    int numEl = d->giveNumberOfElements(); 
+    FloatArray dc(numEl);
+    double ce = 0.0, dce = 0.0;
+    for (int i = 1; i < numEl; i++) {
         Element *el = d->giveElement(i);
-        el->giveCharacteristicMatrix(Ke, SecantStiffnessMatrix, tStep);
-        el->computeVectorOf(EID_MomentumBalance, VM_Total, tStep, ae);
-        help.beProductOf(Ke,ae);
-        double temp =  ae.dotProduct(help);
-        costFunction += pow( designVarList.at(i), penalty) * temp;
-        dCostFunction.at(i) = -penalty * pow( designVarList.at(i), penalty-1.0) * temp;
+        this->costFunctionAndDerivative(el, ce, dce, tStep);
+        cost += ce; // add cost for each element
+        dc.at(i) = dce; // save derivative of cost function
 
     }
+    //dc.printYourself();
+    double sum = this->designVarList.sum();
+    this->optimalityCriteria(20, 20, this->designVarList, dc);
 
-    this->optimalityCriteria(20, 20, designVarList, volFrac, dCostFunction);
-    
+    sum = this->designVarList.sum();
+
     for (int i = 1; i < numMat; i++) {
         DynamicInputRecord ir;
         Material *mat = d->giveMaterial(i);
         mat->giveInputRecord(ir);
-        //ir.setField(prop * pow( designVarList.at(i), penalty), _IFT_IsotropicLinearElasticMaterial_e);
-        ir.setField(prop * designVarList.at(i), _IFT_IsotropicLinearElasticMaterial_e);
+        ir.setField(pow( this->designVarList.at(i), this->penalty), _IFT_IsotropicLinearElasticMaterial_e);
         mat->initializeFrom(&ir);
     }
 
     //designVarList.printYourself();
     
-    printf("costfunction %e and sum design %e\n", costFunction, designVarList.sum());
+    printf("\n costfunction %e and sum design %e \n \n", cost, this->designVarList.sum());
 }
 
+
 void 
-StaticFracture :: optimalityCriteria(int numElX, int numElY, FloatArray &x, double volFrac, FloatArray dCostFunction)
+StaticFracture :: costFunctionAndDerivative(Element *el, double &ce, double &dce, TimeStep *tStep)
+{
+    FloatArray help, ae;
+    FloatMatrix Ke;
+    el->giveCharacteristicMatrix(Ke, ElasticStiffnessMatrix, tStep);
+    double fac = pow( this->designVarList.at(el->giveNumber()), this->penalty);
+    el->computeVectorOf(EID_MomentumBalance, VM_Total, tStep, ae);
+    //ae.printYourself();
+    help.beProductOf(Ke,ae);
+    
+    double temp =  ae.dotProduct(help);
+    ce  =  temp;
+    dce = -this->penalty * pow( designVarList.at(el->giveNumber()), this->penalty-1.0) * temp/fac;
+}
+
+
+
+void 
+StaticFracture :: optimalityCriteria(int numElX, int numElY, FloatArray &x, FloatArray &dc)
 {
  double l1 = 0; 
  double l2 = 100000; 
- double move = 0.15;
+ double move = 0.2;
+ double density=x.sum();
+ FloatArray xOld = x;
  while (l2-l1 > 1.0e-4) {
     double lmid = 0.5*(l2+l1);
 
-    for (int i = 1; i < x.giveSize(); i++)
-    {
+    for (int i = 1; i < x.giveSize(); i++) {
+
         //xnew = max(0.001,max(x-move,min(1.,min(x+move,x.*sqrt(-dc./lmid)))));
-        double temp1 = x.at(i) + move;
-        double temp2 = x.at(i) * sqrt(-dCostFunction.at(i)/lmid);
-        double temp3 = temp1 < temp2 ? temp1 : temp2;
-        temp2 = 1.0 < temp3 ? 1.0 : temp3;
-        temp1 = x.at(i) - move;
-        temp3 = temp1 > temp2 ? temp1 : temp2;
-        temp1 = 0.001 > temp3 ? 0.001 : temp3;
-        //designVarList.at(i) = max(0.001, max(x-move, min(1., min(x+move,x.*sqrt(-dCostFunction.at(i)/lmid)))));
+        double temp1 = max(0.001, max(xOld.at(i)-move, min(1., min(xOld.at(i) + move, xOld.at(i) * sqrt(-dc.at(i)/lmid) ) )));
+        //double temp1 = x.at(i) + move;
+        //double temp2 = x.at(i) * sqrt(-dc.at(i)/lmid);
+        //double temp3 = min(temp1, temp2);
+        //temp2 = min(1.0, temp3);
+        //temp1 = x.at(i) - move;
+        //temp3 = max(temp1, temp2);
+        //temp1 = max(0.001,temp3);
+        ////designVarList.at(i) = max(0.001, max(x-move, min(1., min(x+move,x.*sqrt(-dCostFunction.at(i)/lmid)))));
         x.at(i) = temp1;
         
     }
-    double density = x.sum();
-    if ( density - volFrac*numElX*numElY > 0 ) {
+    density = x.sum();
+    if ( density - this->volFrac*numElX*numElY > 0 ) {
         l1 = lmid;
     } else {
         l2 = lmid;
     }
+    
  }
 
+ //x.printYourself();
  //printf("l1 and l2 %e %e \n", l1,l2);
 }
 
