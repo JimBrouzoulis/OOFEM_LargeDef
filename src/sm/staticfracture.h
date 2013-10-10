@@ -40,8 +40,20 @@
 #include "fracturemanager.h"
 #include "Element.h"
 
-#define _IFT_StaticFracture_Name "staticfracture"
+#include "engngm.h"
 
+///@name Input fields for StaggeredProblem
+//@{
+#define _IFT_OptimizationProblem_nsteps "nsteps"
+#define _IFT_StaticFracture_Name "optimizationproblem"
+#define _IFT__IFT_OptimizationProblem_NumObjFunc "numobjfunc"
+//#define _IFT__IFT_OptimizationProblem_Name_dtf "dtf"
+//#define _IFT__IFT_OptimizationProblem_Name_timeDefinedByProb "timedefinedbyprob"
+//#define _IFT__IFT_OptimizationProblem_Name_stepmultiplier "stepmultiplier"
+//#define _IFT__IFT_OptimizationProblem_Name_prescribedtimes "prescribedtimes"
+#define _IFT__IFT_OptimizationProblem_Name_prob1 "prob1"
+#define _IFT__IFT_OptimizationProblem_Name_prob2 "prob2"
+//@}
 namespace oofem {
 /**
  * This class implements a nonlinear static fracture problem.
@@ -55,35 +67,28 @@ protected:
     virtual void solveYourselfAt(TimeStep *tStep);
     virtual void terminate(TimeStep *tStep);
     virtual void updateLoadVectors(TimeStep *tStep);
-
-
     virtual void updateYourself(TimeStep *tStep);
+    void optimize(TimeStep *tStep);
 
+    /// number of objective functions to minimize
+    int numObjFunc;
 
-    virtual double giveUnknownComponent(ValueModeType mode, TimeStep *tStep, Domain *d, Dof *dof);
+    /// Number of engineering models to run.
+    int nModels;
     
-    // for updating structure
-    void setTotalDisplacementFromUnknownsInDictionary(EquationID type, ValueModeType mode, TimeStep *tStep);
-    void initializeDofUnknownsDictionary(TimeStep *tStep);
-    virtual void updateDofUnknownsDictionary(DofManager *inode, TimeStep *tStep);
+    /// List of slave models to which this model is coupled    
+    IntArray coupledModels;
 
-    void evaluatePropagationLaw(TimeStep *tStep);
-    void evaluatePropagationLawForDelamination(Element *el, EnrichmentDomain *ed, TimeStep *tStep);
-    void computeInterLaminarStressesAt(int layer, Element *el, TimeStep *tStep, std::vector < FloatArray > &interLamStresses);
-    void evaluateFractureCriterion(std::vector < FloatArray > &interLamStresses, bool &propagateFlag);
-    bool updateStructureFlag;
+    /// List of engineering models to solve sequentially.
+    AList< EngngModel > *emodelList;
+    
+    std :: string *inputStreamNames;
 
-    // Fracture manager stuff
-    FractureManager *fMan;
+    int instanciateSlaveProblems();
 
 public:
     StaticFracture(int i, EngngModel *_master = NULL);
     virtual ~StaticFracture(){};
-    virtual int requiresUnknownsDictionaryUpdate() { return updateStructureFlag; }
-    virtual bool requiresEquationRenumbering(TimeStep *) { return updateStructureFlag; }
-    void setUpdateStructureFlag(bool flag) { updateStructureFlag = flag; }
-    bool needsStructureUpdate() {return updateStructureFlag; };
-
 
     // new topology opt
 
@@ -94,6 +99,20 @@ public:
     double min(double a, double b) { return a < b ? a : b; };
     double max(double a, double b) { return a > b ? a : b; };
     void costFunctionAndDerivative(Element *el, double &costFunction, double &dCostFunction, TimeStep *tStep);
+
+
+    virtual void solveYourself();
+    //virtual void initializeYourself(TimeStep *tStep) { }
+    
+    //virtual void doStepOutput(TimeStep *tStep);
+
+    virtual int instanciateYourself(DataReader *dr, InputRecord *ir, const char *outFileName, const char *desc);
+
+    virtual IRResultType initializeFrom(InputRecord *ir);
+    //virtual void updateAttributes(MetaStep *mStep);
+
+    
+
 };
 
 } // end namespace oofem

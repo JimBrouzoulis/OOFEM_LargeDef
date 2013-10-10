@@ -38,6 +38,10 @@
 #include "enrichmentdomain.h"
 #include "classfactory.h"
 #include "dynamicinputrecord.h"
+#include "isolinearelasticmaterial.h"
+
+#include "oofemtxtdatareader.h" // for reading .in files
+#include "util.h"               // for creating eng models
 #include <vector>
 
 namespace oofem {
@@ -46,24 +50,139 @@ REGISTER_EngngModel( StaticFracture );
 
 StaticFracture :: StaticFracture(int i, EngngModel *_master) : NonLinearStatic(i, _master)
 {
-    updateStructureFlag = false; // if true, then the internal structure needs to be updated
+    ndomains = 1;
+}
+
+
+IRResultType
+StaticFracture :: initializeFrom(InputRecord *ir)
+{
+    const char *__proc = "initializeFrom"; // Required by IR_GIVE_FIELD macro
+    IRResultType result;                // Required by IR_GIVE_FIELD macro
+
+    IR_GIVE_FIELD(ir, this->numberOfSteps, _IFT_OptimizationProblem_nsteps);
+    if ( this->numberOfSteps <= 0 ) {
+        _error("instanciateFrom: nsteps not specified, bad format");
+    }
+
+    //if ( ir->hasField(_IFT_StaggeredProblem_deltat) ) {
+    //    EngngModel :: initializeFrom(ir);
+    //    IR_GIVE_FIELD(ir, deltaT, _IFT_StaggeredProblem_deltat);
+    //    dtTimeFunction = 0;
+    //} else if ( ir->hasField(_IFT_StaggeredProblem_prescribedtimes) ) {
+    //    EngngModel :: initializeFrom(ir);
+    //    IR_GIVE_FIELD(ir, discreteTimes, _IFT_StaggeredProblem_prescribedtimes);
+    //    dtTimeFunction = 0;
+    //} else {
+    //    IR_GIVE_FIELD(ir, timeDefinedByProb, _IFT_StaggeredProblem_timeDefinedByProb);
+    //}
+
+    //if ( dtTimeFunction < 1 ) {
+    //    ndomains = 0;
+    //}
+
+    //IR_GIVE_OPTIONAL_FIELD(ir, dtTimeFunction, _IFT_StaggeredProblem_dtf);
+    //IR_GIVE_OPTIONAL_FIELD(ir, stepMultiplier, _IFT_StaggeredProblem_stepmultiplier);
+    //if ( stepMultiplier < 0 ) {
+    //    _error("stepMultiplier must be > 0")
+    //}
+  
+    
+    IR_GIVE_FIELD(ir, this->numObjFunc, _IFT__IFT_OptimizationProblem_NumObjFunc);
+    emodelList = new AList< EngngModel >(1);
+    inputStreamNames = new std :: string [ 1 ];
+    //for (int i = 1; i <= this->numObjFunc; i++) {
+        //IR_GIVE_FIELD(ir, inputStreamNames [ i-1 ], _IFT__IFT_OptimizationProblem_Name_prob1);
+    //}
+    
+    //IR_GIVE_FIELD(ir, inputStreamNames [ 1 ], _IFT__IFT_OptimizationProblem_Name_prob1);
+
+
+    return IRRT_OK;
+}
+
+///////////
+int
+StaticFracture :: instanciateYourself(DataReader *dr, InputRecord *ir, const char *dataOutputFileName, const char *desc)
+{
+    int result;
+    //result = EngngModel :: instanciateYourself(dr, ir, dataOutputFileName, desc);
+    ir->finish();
+    // instanciate slave problems
+    result &= this->instanciateSlaveProblems();
+    return result;
+}
+
+
+int
+StaticFracture :: instanciateSlaveProblems()
+{
+    EngngModel *timeDefProb = NULL, *slaveProb;
+
+    //first instantiate master problem if defined
+    //if ( timeDefinedByProb ) {
+    //    OOFEMTXTDataReader dr( inputStreamNames [ timeDefinedByProb - 1 ].c_str() );
+    //    timeDefProb = oofem :: InstanciateProblem(& dr, this->pMode, this->contextOutputMode, NULL);
+    //    emodelList->put(timeDefinedByProb, timeDefProb);
+    //}
+
+    //for ( int i = 1; i <= nModels; i++ ) {
+    //    if ( emodelList->includes(i) ) {
+    //        continue;
+    //    }
+        int i=1;
+        OOFEMTXTDataReader dr( inputStreamNames [ i - 1 ].c_str() );
+    //    //the slave problem dictating time needs to have attribute master=NULL, other problems point to the dictating slave
+       //slaveProb = oofem :: InstanciateProblem(& dr, this->pMode, this->contextOutputMode, timeDefinedByProb ? timeDefProb : this);
+        slaveProb = oofem :: InstanciateProblem(& dr, this->pMode, this->contextOutputMode, this);
+        emodelList->put(i, slaveProb);
+    //}
+
+    return 1;
+}
+
+void
+StaticFracture :: solveYourself()
+{
+    MetaStep *activeMStep;
+    FILE *out = this->giveOutputStream();
+    this->timer.startTimer(EngngModelTimer :: EMTT_AnalysisTimer);
+    this->giveNumberOfSlaveProblems();
+    
+
+    this->timer.startTimer(EngngModelTimer :: EMTT_SolutionStepTimer);
+    this->timer.initTimer(EngngModelTimer :: EMTT_NetComputationalStepTimer);
+
+
+    int nTimeSteps = activeMStep->giveNumberOfSteps();
+    for ( int tStepNum = 1; tStepNum <= nTimeSteps; tStepNum++ ) { //loop over time steps in opt analysis
+
+        this->solveYourself();
+        this->updateYourself( this->giveCurrentStep());
+        this->terminate( this->giveCurrentStep() );
+        
+        // optimization
+        this->optimize( this->giveCurrentStep() );    
+    }
+
 }
 
 
 void
 StaticFracture :: solveYourselfAt(TimeStep *tStep)
 {
-
-    NonLinearStatic :: solveYourselfAt(tStep);
-
+    for ( int subProb = 1; subProb <= this->giveNumberOfSlaveProblems(); subProb++ ) {
+        EngngModel *sp = this->giveSlaveProblem(subProb);
+        sp->solveYourself();
+    }   
 }
 
-#include "isolinearelasticmaterial.h"
-void 
-StaticFracture :: updateYourself(TimeStep *tStep)
-{
 
-    NonLinearStatic :: updateYourself(tStep);
+void
+StaticFracture :: optimize(TimeStep *tStep)
+{
+    // Main optimization loop
+
 
     Domain *d = this->giveDomain(1);   
     int numMat = d->giveNumberOfMaterialModels();
@@ -107,6 +226,18 @@ StaticFracture :: updateYourself(TimeStep *tStep)
     //designVarList.printYourself();
     
     printf("\n costfunction %e and sum design %e \n \n", cost, this->designVarList.sum());
+
+
+}
+
+
+void 
+StaticFracture :: updateYourself(TimeStep *tStep)
+{
+    for ( int subProb = 1; subProb <= this->giveNumberOfSlaveProblems(); subProb++ ) {    
+        EngngModel *sp = this->giveSlaveProblem(subProb);
+        sp->updateYourself(tStep);
+    }
 }
 
 
@@ -167,15 +298,20 @@ StaticFracture :: optimalityCriteria(int numElX, int numElY, FloatArray &x, Floa
  //printf("l1 and l2 %e %e \n", l1,l2);
 }
 
-// remove
 void
 StaticFracture :: terminate(TimeStep *tStep)
-{
-    NonLinearStatic :: terminate(tStep);
+{    
+    for ( int subProb = 1; subProb <= this->giveNumberOfSlaveProblems(); subProb++ ) {
+        EngngModel *sp = this->giveSlaveProblem(subProb);
+        sp->terminate(tStep);
+    }
+
 }
 
 
 
+
+//remove
 void
 StaticFracture :: updateLoadVectors(TimeStep *tStep)
 {
@@ -184,106 +320,6 @@ StaticFracture :: updateLoadVectors(TimeStep *tStep)
 
 
 
-// Updating dofs and evaluating unknowns
-#if 1
-
-double 
-StaticFracture ::  giveUnknownComponent(ValueModeType mode, TimeStep *tStep, Domain *d, Dof *dof)
-{
-    // Returns the unknown quantity corresponding to the dof
-    if ( this->requiresUnknownsDictionaryUpdate() ) {
-        int hash = this->giveUnknownDictHashIndx(mode, tStep);
-        if ( dof->giveUnknowns()->includes(hash) ) {
-            return dof->giveUnknowns()->at(hash);
-        } else { // Value is not initiated in UnknownsDictionary
-            return 0.0; ///@todo: how should one treat newly created dofs?
-            //OOFEM_ERROR2( "giveUnknown:  Dof unknowns dictionary does not contain unknown of value mode (%s)", __ValueModeTypeToString(mode) );
-        }
-    } else {
-        return NonLinearStatic ::  giveUnknownComponent(mode, tStep, d, dof);
-    }
-    
-}
-
-
-void
-StaticFracture :: initializeDofUnknownsDictionary(TimeStep *tStep) 
-{
-    // Initializes all dof values to zero
-    
-    Domain *domain;
-    Dof *iDof;
-    DofManager *node;
-    
-    int nDofs;
-    for ( int idomain = 1; idomain <= this->giveNumberOfDomains(); idomain++ ) {
-        domain = this->giveDomain(idomain);
-        int nnodes = domain->giveNumberOfDofManagers();
-        for ( int inode = 1; inode <= nnodes; inode++ ) {
-            node = domain->giveDofManager(inode);
-            nDofs = node->giveNumberOfDofs();
-            for ( int i = 1; i <= nDofs; i++ ) {
-                iDof = node->giveDof(i);
-                iDof->updateUnknownsDictionary(tStep->givePreviousStep(), VM_Total, 0.0);
-            }
-        }
-    }
-}
-
-
-
-void
-StaticFracture :: updateDofUnknownsDictionary(DofManager *inode, TimeStep *tStep)
-{
-
-    // update DoF unknowns dictionary. 
-    Dof *iDof;
-    double val;
-    for ( int i = 1; i <= inode->giveNumberOfDofs(); i++ ) {
-        iDof = inode->giveDof(i);
-        int eqNum = iDof->__giveEquationNumber();
-        if ( iDof->hasBc(tStep) ) { 
-            val = iDof->giveBcValue(VM_Total, tStep);
-        } else {
-            if ( eqNum > 0 ) {
-                val = totalDisplacement.at(eqNum);
-            } else { // new eq number
-                val = 0.0;
-            }
-        }
-
-        iDof->updateUnknownsDictionary(tStep, VM_Total, val);
-    }
-}
-
-
-void
-StaticFracture :: setTotalDisplacementFromUnknownsInDictionary(EquationID type, ValueModeType mode, TimeStep *tStep) 
-{
-    // Sets the values in the displacement vector based on stored values in the unknowns dictionaries.
-    // Used in the beginning of each time step.
-    Domain *domain;
-    DofManager *inode;
-    Dof *iDof;
-    for ( int idomain = 1; idomain <= this->giveNumberOfDomains(); idomain++ ) {
-        domain = this->giveDomain(idomain);
-        for ( int j = 1; j <= domain->giveNumberOfDofManagers(); j++ ) {
-            inode = domain->giveDofManager(j);
-            int eqNum;
-            for ( int i = 1; i <= inode->giveNumberOfDofs(); i++ ) {
-                iDof = inode->giveDof(i);
-                eqNum = iDof->giveEqn();
-                if ( eqNum > 0 ) {
-                    double val = iDof->giveUnknown(mode, tStep);
-                    totalDisplacement.at(eqNum) = val;
-                }
-            }
-        }   
-    }
-
-}
-
-#endif
 
 
 
