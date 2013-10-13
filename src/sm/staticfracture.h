@@ -110,8 +110,8 @@ public:
 
     virtual IRResultType initializeFrom(InputRecord *ir);
     //virtual void updateAttributes(MetaStep *mStep);
-
-    
+    virtual int giveNumberOfSlaveProblems() { return nModels; }
+    virtual EngngModel *giveSlaveProblem(int i);
 
 };
 

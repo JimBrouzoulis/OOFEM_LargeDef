@@ -39,6 +39,7 @@
 #include "classfactory.h"
 #include "dynamicinputrecord.h"
 #include "isolinearelasticmaterial.h"
+#include "exportmodulemanager.h"
 
 #include "oofemtxtdatareader.h" // for reading .in files
 #include "util.h"               // for creating eng models
@@ -76,11 +77,9 @@ StaticFracture :: initializeFrom(InputRecord *ir)
     //} else {
     //    IR_GIVE_FIELD(ir, timeDefinedByProb, _IFT_StaggeredProblem_timeDefinedByProb);
     //}
-
     //if ( dtTimeFunction < 1 ) {
     //    ndomains = 0;
     //}
-
     //IR_GIVE_OPTIONAL_FIELD(ir, dtTimeFunction, _IFT_StaggeredProblem_dtf);
     //IR_GIVE_OPTIONAL_FIELD(ir, stepMultiplier, _IFT_StaggeredProblem_stepmultiplier);
     //if ( stepMultiplier < 0 ) {
@@ -95,8 +94,8 @@ StaticFracture :: initializeFrom(InputRecord *ir)
         //IR_GIVE_FIELD(ir, inputStreamNames [ i-1 ], _IFT__IFT_OptimizationProblem_Name_prob1);
     //}
     
-    //IR_GIVE_FIELD(ir, inputStreamNames [ 1 ], _IFT__IFT_OptimizationProblem_Name_prob1);
-
+    IR_GIVE_FIELD(ir, inputStreamNames [ 0 ], _IFT__IFT_OptimizationProblem_Name_prob1);
+//    IR_GIVE_FIELD(ir, inputStreamNames [ 1 ], "top.in");
 
     return IRRT_OK;
 }
@@ -105,6 +104,25 @@ StaticFracture :: initializeFrom(InputRecord *ir)
 int
 StaticFracture :: instanciateYourself(DataReader *dr, InputRecord *ir, const char *dataOutputFileName, const char *desc)
 {
+
+    this->Instanciate_init(dataOutputFileName, this->ndomains);
+
+
+
+    fprintf(outputStream, "%s", PRG_HEADER);
+    this->startTime = time(NULL);
+    ////this->startClock= this-> getClock();
+    fprintf( outputStream, "\nStarting analysis on: %s\n", ctime(& this->startTime) );
+    fprintf(outputStream, "%s\n", desc);
+
+
+    // instanciate receiver
+    this->initializeFrom(ir);
+    this->instanciateDefaultMetaStep(ir); // after numSteps has been set
+
+    //exportModuleManager->initializeFrom(ir);
+    //initModuleManager->initializeFrom(ir);
+
     int result;
     //result = EngngModel :: instanciateYourself(dr, ir, dataOutputFileName, desc);
     ir->finish();
@@ -114,30 +132,77 @@ StaticFracture :: instanciateYourself(DataReader *dr, InputRecord *ir, const cha
 }
 
 
+//int EngngModel :: instanciateYourself(DataReader *dr, InputRecord *ir, const char *dataOutputFileName, const char *desc)
+//// simple input - only number of steps variable is read
+//{
+//    bool inputReaderFinish = true;
+//
+//    this->Instanciate_init(dataOutputFileName, this->ndomains);
+//
+//    fprintf(outputStream, "%s", PRG_HEADER);
+//    this->startTime = time(NULL);
+//    //this->startClock= this-> getClock();
+//    fprintf( outputStream, "\nStarting analysis on: %s\n", ctime(& this->startTime) );
+//
+//    fprintf(outputStream, "%s\n", desc);
+//
+//#  ifdef VERBOSE
+//    OOFEM_LOG_DEBUG( "Reading all data from input file %s\n", dr->giveDataSourceName() );
+//#  endif
+//#ifdef __PARALLEL_MODE
+//    if ( this->isParallel() ) {
+//        fprintf(outputStream, "Problem rank is %d/%d on %s\n\n", this->rank, this->numProcs, this->processor_name);
+//    }
+//
+//#endif
+//
+//    // instanciate receiver
+//    this->initializeFrom(ir);
+//    exportModuleManager->initializeFrom(ir);
+//    initModuleManager->initializeFrom(ir);
+//
+//    if ( this->nMetaSteps == 0 ) {
+//        inputReaderFinish = false;
+//        this->instanciateDefaultMetaStep(ir);
+//    } else {
+//        this->instanciateMetaSteps(dr);
+//    }
+//
+//    // instanciate initialization module manager
+//    initModuleManager->instanciateYourself(dr, ir);
+//    // instanciate export module manager
+//    exportModuleManager->instanciateYourself(dr, ir);
+//    this->instanciateDomains(dr);
+//
+//    exportModuleManager->initialize();
+//
+//    // Milan ??????????????????
+//    //GPImportModule* gim = new GPImportModule(this);
+//    //gim -> getInput();
+//    // Milan ??????????????????
+//
+//#endif
+//    // check emodel input record if no default metastep, since all has been read
+//    if ( inputReaderFinish ) {
+//        ir->finish();
+//    }
+//
+//    return 1;
+//}
+
 int
 StaticFracture :: instanciateSlaveProblems()
 {
     EngngModel *timeDefProb = NULL, *slaveProb;
 
-    //first instantiate master problem if defined
-    //if ( timeDefinedByProb ) {
-    //    OOFEMTXTDataReader dr( inputStreamNames [ timeDefinedByProb - 1 ].c_str() );
-    //    timeDefProb = oofem :: InstanciateProblem(& dr, this->pMode, this->contextOutputMode, NULL);
-    //    emodelList->put(timeDefinedByProb, timeDefProb);
-    //}
-
-    //for ( int i = 1; i <= nModels; i++ ) {
-    //    if ( emodelList->includes(i) ) {
-    //        continue;
-    //    }
-        int i=1;
-        OOFEMTXTDataReader dr( inputStreamNames [ i - 1 ].c_str() );
-    //    //the slave problem dictating time needs to have attribute master=NULL, other problems point to the dictating slave
-       //slaveProb = oofem :: InstanciateProblem(& dr, this->pMode, this->contextOutputMode, timeDefinedByProb ? timeDefProb : this);
-        slaveProb = oofem :: InstanciateProblem(& dr, this->pMode, this->contextOutputMode, this);
-        emodelList->put(i, slaveProb);
-    //}
-
+    int i=1;
+    this->nModels = 1;
+    OOFEMTXTDataReader dr( inputStreamNames [ i - 1 ].c_str() );
+    //the slave problem dictating time needs to have attribute master=NULL, other problems point to the dictating slave
+    //slaveProb = oofem :: InstanciateProblem(& dr, this->pMode, this->contextOutputMode, this);
+    slaveProb = oofem :: InstanciateProblem(& dr, this->pMode, this->contextOutputMode, NULL);
+    emodelList->put(i, slaveProb);
+   
     return 1;
 }
 
@@ -149,21 +214,43 @@ StaticFracture :: solveYourself()
     this->timer.startTimer(EngngModelTimer :: EMTT_AnalysisTimer);
     this->giveNumberOfSlaveProblems();
     
-
     this->timer.startTimer(EngngModelTimer :: EMTT_SolutionStepTimer);
     this->timer.initTimer(EngngModelTimer :: EMTT_NetComputationalStepTimer);
 
 
-    int nTimeSteps = activeMStep->giveNumberOfSteps();
-    for ( int tStepNum = 1; tStepNum <= nTimeSteps; tStepNum++ ) { //loop over time steps in opt analysis
+    int numMetaSteps = this->giveNumberOfMetaSteps();
+    for (int imstep = 1; imstep <= numMetaSteps; imstep++) {
+        activeMStep = this->giveMetaStep(imstep);
 
-        this->solveYourself();
-        this->updateYourself( this->giveCurrentStep());
-        this->terminate( this->giveCurrentStep() );
+        //this->initMetaStepAttributes(activeMStep); // give numerical method and read other input
+
+        int nTimeSteps = activeMStep->giveNumberOfSteps();
+        for ( int tStepNum = 1; tStepNum <= nTimeSteps; tStepNum++ ) { //loop over time steps in opt analysis
+
+            EngngModel *sp = this->giveSlaveProblem(1); 
+           
+            //sp->initMetaStepAttributes( sp->giveMetaStep(imstep) );
+            
+            // Resetting the time step number for each sp after each optimization time step
+
+            
+            sp->solveYourself();
+
+            this->updateYourself( this->giveCurrentStep());
+            
+            if ( tStepNum > 1) {
+                TimeStep *tStep =  sp->giveCurrentStep();
+                tStep->setNumber(0); 
+            }
+            this->terminate( this->giveCurrentStep() );
         
-        // optimization
-        this->optimize( this->giveCurrentStep() );    
+            //sp->giveExportModuleManager()->doOutput( this->giveCurrentStep() );
+            
+            // optimization
+            this->optimize( this->giveCurrentStep() );    
+        }
     }
+    
 
 }
 
@@ -173,10 +260,26 @@ StaticFracture :: solveYourselfAt(TimeStep *tStep)
 {
     for ( int subProb = 1; subProb <= this->giveNumberOfSlaveProblems(); subProb++ ) {
         EngngModel *sp = this->giveSlaveProblem(subProb);
+
+        //sp->giveNextStep();
         sp->solveYourself();
+        //sp->solveYourselfAt( sp->giveCurrentStep() );
+        
     }   
 }
 
+
+EngngModel *
+StaticFracture :: giveSlaveProblem(int i)
+{
+    if ( ( i > 0 ) && ( i <= this->nModels ) ) {
+        return this->emodelList->at(i);
+    } else {
+        _error("giveSlaveProblem: Undefined problem");
+    }
+
+    return NULL;
+}
 
 void
 StaticFracture :: optimize(TimeStep *tStep)
@@ -184,50 +287,54 @@ StaticFracture :: optimize(TimeStep *tStep)
     // Main optimization loop
 
 
-    Domain *d = this->giveDomain(1);   
-    int numMat = d->giveNumberOfMaterialModels();
+    for ( int subProb = 1; subProb <= this->giveNumberOfSlaveProblems(); subProb++ ) {
+        EngngModel *sp = this->giveSlaveProblem(subProb);
 
-    if (tStep->isTheFirstStep() ) {
-        // initialize parameters
-        this->penalty = 3.5;
-        this->volFrac = 0.3;
 
-        this->designVarList.resize(numMat);
-        for (int i = 1; i < numMat; i++) {
-            this->designVarList.at(i) = 1.0; //this->volFrac;
+        Domain *d = sp->giveDomain(1);   
+        int numMat = d->giveNumberOfMaterialModels();
+
+        if (tStep->isTheFirstStep() ) {
+            // initialize parameters
+            this->penalty = 3.5;
+            this->volFrac = 0.3;
+
+            this->designVarList.resize(numMat);
+            for (int i = 1; i < numMat; i++) {
+                this->designVarList.at(i) = 1.0; //this->volFrac;
+            }
         }
-    }
 
-    double cost = 0.0;
-    int numEl = d->giveNumberOfElements(); 
-    FloatArray dc(numEl);
-    double ce = 0.0, dce = 0.0;
-    for (int i = 1; i < numEl; i++) {
-        Element *el = d->giveElement(i);
-        this->costFunctionAndDerivative(el, ce, dce, tStep);
-        cost += ce; // add cost for each element
-        dc.at(i) = dce; // save derivative of cost function
+        double cost = 0.0;
+        int numEl = d->giveNumberOfElements(); 
+        FloatArray dc(numEl);
+        double ce = 0.0, dce = 0.0;
+        for (int i = 1; i < numEl; i++) {
+            Element *el = d->giveElement(i);
+            this->costFunctionAndDerivative(el, ce, dce, tStep);
+            cost += ce; // add cost for each element
+            dc.at(i) = dce; // save derivative of cost function
 
-    }
-    //dc.printYourself();
-    double sum = this->designVarList.sum();
-    this->optimalityCriteria(20, 20, this->designVarList, dc);
+        }
+        //dc.printYourself();
+        double sum = this->designVarList.sum();
+        this->optimalityCriteria(20, 20, this->designVarList, dc);
 
-    sum = this->designVarList.sum();
+        sum = this->designVarList.sum();
 
-    for (int i = 1; i < numMat; i++) {
-        DynamicInputRecord ir;
-        Material *mat = d->giveMaterial(i);
-        mat->giveInputRecord(ir);
-        ir.setField(pow( this->designVarList.at(i), this->penalty), _IFT_IsotropicLinearElasticMaterial_e);
-        mat->initializeFrom(&ir);
-    }
+        for (int i = 1; i < numMat; i++) {
+            DynamicInputRecord ir;
+            Material *mat = d->giveMaterial(i);
+            mat->giveInputRecord(ir);
+            ir.setField(pow( this->designVarList.at(i), this->penalty), _IFT_IsotropicLinearElasticMaterial_e);
+            mat->initializeFrom(&ir);
+        }
 
-    //designVarList.printYourself();
+        //designVarList.printYourself();
     
-    printf("\n costfunction %e and sum design %e \n \n", cost, this->designVarList.sum());
+        printf("\n costfunction %e and sum design %e \n \n", cost, this->designVarList.sum());
 
-
+    }
 }
 
 
@@ -236,7 +343,8 @@ StaticFracture :: updateYourself(TimeStep *tStep)
 {
     for ( int subProb = 1; subProb <= this->giveNumberOfSlaveProblems(); subProb++ ) {    
         EngngModel *sp = this->giveSlaveProblem(subProb);
-        sp->updateYourself(tStep);
+        //sp->giveCurrentStep()
+//        sp->updateYourself(sp->giveCurrentStep());
     }
 }
 
@@ -303,7 +411,7 @@ StaticFracture :: terminate(TimeStep *tStep)
 {    
     for ( int subProb = 1; subProb <= this->giveNumberOfSlaveProblems(); subProb++ ) {
         EngngModel *sp = this->giveSlaveProblem(subProb);
-        sp->terminate(tStep);
+       // sp->terminate(tStep);
     }
 
 }
