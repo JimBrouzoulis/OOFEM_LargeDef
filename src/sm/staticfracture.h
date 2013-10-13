@@ -59,6 +59,33 @@ namespace oofem {
  * This class implements a nonlinear static fracture problem.
  * It provides (or will) functionality for updating the model after each time step according to some propagation model
  */
+
+class ObjectiveFunction
+{
+public:
+    // name 
+    int number;
+    virtual double evaluateYourself(Element *el, double &dc, TimeStep *tStep) = 0;
+    FloatArray designVarList;
+    FloatArray sensitivityList;
+    double constraint;
+};
+
+class MinCompliance : public ObjectiveFunction
+{
+public:
+    MinCompliance()
+    { 
+    penalty = 3.5;
+    volFrac = 0.3;
+    constraint = 0.3;
+    };
+    double penalty;
+    double volFrac;
+    virtual double evaluateYourself(Element *el, double &dc, TimeStep *tStep);
+
+};
+
 class StaticFracture : public NonLinearStatic
 {
 protected:
@@ -76,8 +103,6 @@ protected:
     /// Number of engineering models to run.
     int nModels;
     
-    /// List of slave models to which this model is coupled    
-    IntArray coupledModels;
 
     /// List of engineering models to solve sequentially.
     AList< EngngModel > *emodelList;
@@ -91,14 +116,10 @@ public:
     virtual ~StaticFracture(){};
 
     // new topology opt
+    void optimalityCriteria(ObjectiveFunction *objFunc);
 
-    void optimalityCriteria(int numElX, int numElY, FloatArray &x, FloatArray &dc);
-    FloatArray designVarList;
-    double penalty;
-    double volFrac;
     double min(double a, double b) { return a < b ? a : b; };
     double max(double a, double b) { return a > b ? a : b; };
-    void costFunctionAndDerivative(Element *el, double &costFunction, double &dCostFunction, TimeStep *tStep);
 
 
     virtual void solveYourself();
@@ -112,6 +133,7 @@ public:
     //virtual void updateAttributes(MetaStep *mStep);
     virtual int giveNumberOfSlaveProblems() { return nModels; }
     virtual EngngModel *giveSlaveProblem(int i);
+    std :: vector< ObjectiveFunction* > objFuncList;
 
 };
 
