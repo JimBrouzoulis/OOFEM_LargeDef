@@ -135,6 +135,8 @@ public:
     virtual EngngModel *giveSlaveProblem(int i);
     std :: vector< ObjectiveFunction* > objFuncList;
 
+    void filterSensitivities(ObjectiveFunction *objFunc);
+
 };
 
 } // end namespace oofem

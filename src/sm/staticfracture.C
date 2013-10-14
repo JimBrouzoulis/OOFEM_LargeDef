@@ -113,13 +113,10 @@ StaticFracture :: instanciateYourself(DataReader *dr, InputRecord *ir, const cha
 
     this->Instanciate_init(dataOutputFileName, this->ndomains);
 
-
-
-    fprintf(outputStream, "%s", PRG_HEADER);
+    fprintf( outputStream, "%s", PRG_HEADER);
     this->startTime = time(NULL);
-    ////this->startClock= this-> getClock();
     fprintf( outputStream, "\nStarting analysis on: %s\n", ctime(& this->startTime) );
-    fprintf(outputStream, "%s\n", desc);
+    fprintf( outputStream, "%s\n", desc);
 
 
     // instanciate receiver
@@ -130,7 +127,6 @@ StaticFracture :: instanciateYourself(DataReader *dr, InputRecord *ir, const cha
     //initModuleManager->initializeFrom(ir);
 
     int result;
-    //result = EngngModel :: instanciateYourself(dr, ir, dataOutputFileName, desc);
     ir->finish();
     // instanciate slave problems
     result &= this->instanciateSlaveProblems();
@@ -142,8 +138,9 @@ StaticFracture :: instanciateYourself(DataReader *dr, InputRecord *ir, const cha
     Domain *d = sp->giveDomain(1);   
     int numMat = d->giveNumberOfMaterialModels();
 
-    MinCompliance *objFunc = dynamic_cast< MinCompliance * >( this->objFuncList[0] ); 
 
+    // initialize Objective function
+    MinCompliance *objFunc = dynamic_cast< MinCompliance * >( this->objFuncList[0] ); 
 
     // Assumed that there is only one design parameter per element
     objFunc->designVarList.resize(numMat);
@@ -152,7 +149,6 @@ StaticFracture :: instanciateYourself(DataReader *dr, InputRecord *ir, const cha
         objFunc->designVarList.at(i) = objFunc->volFrac;
         objFunc->sensitivityList.at(i) = 0.0;
     }
-
 
 
     return result;
@@ -226,7 +222,6 @@ StaticFracture :: instanciateSlaveProblems()
     this->nModels = 1;
     OOFEMTXTDataReader dr( inputStreamNames [ i - 1 ].c_str() );
     //the slave problem dictating time needs to have attribute master=NULL, other problems point to the dictating slave
-    //slaveProb = oofem :: InstanciateProblem(& dr, this->pMode, this->contextOutputMode, this);
     slaveProb = oofem :: InstanciateProblem(& dr, this->pMode, this->contextOutputMode, NULL);
 
     emodelList->put(i, slaveProb);
@@ -247,43 +242,29 @@ StaticFracture :: solveYourself()
 
 
     int numMetaSteps = this->giveNumberOfMetaSteps();
-    for (int imstep = 1; imstep <= numMetaSteps; imstep++) {
+    for (int imstep = 1; imstep <= numMetaSteps; imstep++) { // don't know what will happen if we have several meta steps?
         activeMStep = this->giveMetaStep(imstep);
-
-        //this->initMetaStepAttributes(activeMStep); // give numerical method and read other input
 
         int nTimeSteps = activeMStep->giveNumberOfSteps();
         for ( int tStepNum = 1; tStepNum <= nTimeSteps; tStepNum++ ) { //loop over time steps in opt analysis
 
-            EngngModel *sp = this->giveSlaveProblem(1); 
-           
-            //sp->initMetaStepAttributes( sp->giveMetaStep(imstep) );
-            
-            // Resetting the time step number for each sp after each optimization time step
-
-            
-            sp->solveYourself();
-            //LinearStatic *ls = dynamic_cast<LinearStatic * > (sp);
-            //FloatArray u = ls->displacementVector;
-            //u.printYourself();
-
-            this->updateYourself( this->giveCurrentStep());
-            
-
-            //this->terminate( this->giveCurrentStep() );
+            for ( int subProb = 1; subProb <= this->giveNumberOfSlaveProblems(); subProb++ ) {
         
-            //sp->giveExportModuleManager()->doOutput( this->giveCurrentStep() );
+                EngngModel *sp = this->giveSlaveProblem(subProb); 
+                sp->solveYourself();
+
+                //this->updateYourself( this->giveCurrentStep()); // not neccessary
             
-            // optimization
-            this->optimize( this->giveCurrentStep() );    
+                // optimization
+                this->optimize( this->giveCurrentStep() );    
 
-
-            TimeStep *tStep =  sp->giveCurrentStep();
-              
-            tStep->setNumber(tStepNum); 
-            sp->giveExportModuleManager()->doOutput(tStep);
-            tStep->setNumber(0); 
-                
+                // Resetting the time step number for each sp after each optimization time step
+                TimeStep *tStep =  sp->giveCurrentStep();
+                tStep->setNumber(tStepNum); 
+                sp->giveExportModuleManager()->doOutput(tStep); // turn off export during regular analysis
+            
+                tStep->setNumber(0); // otherwise the anlysis wont restart at time 0
+                }
         }
     }
     
@@ -329,14 +310,16 @@ StaticFracture :: optimize(TimeStep *tStep)
         EngngModel *sp = this->giveSlaveProblem(subProb);
         Domain *d = sp->giveDomain(1);   
 
-        double cost = 0.0;
+        double cost = 0.0; // should lie in obj fnc
         double dce = 0.0;
         for (int i = 1; i <= d->giveNumberOfElements(); i++) {  
             Element *el = d->giveElement(i);
             cost += objFunc->evaluateYourself(el, dce, sp->giveCurrentStep() ); // add cost for each element
-            //objFunc->sensitivityList.at(i) = dce; // save derivative of cost function
         }
-        
+
+
+        // Filter sensitivities
+        this->filterSensitivities(objFunc);
 
         // Update design variables based on some method. For now use the 'standard' optimality criteria
         this->optimalityCriteria(objFunc);
@@ -351,14 +334,8 @@ StaticFracture :: optimize(TimeStep *tStep)
             double fac = pow( objFunc->designVarList.at(i), objFunc->penalty);
             ir.setField( E0 * fac, _IFT_IsotropicLinearElasticMaterial_e);
             mat->initializeFrom(&ir);
-            if (i==1)
-            {
-            //    mat->printYourself();
-            }
         }
 
-        //objFunc->designVarList.printYourself();
-    
         printf("\n costfunction %e & sum sensitivity %e & sum x %e \n", cost, objFunc->sensitivityList.sum(), 
             objFunc->designVarList.sum() );
 
@@ -381,16 +358,19 @@ MinCompliance :: evaluateYourself(Element *el, double &dc, TimeStep *tStep)
 {
     FloatArray help, ae;
     FloatMatrix Ke;
+    int elNum = el->giveNumber();
     el->giveCharacteristicMatrix(Ke, ElasticStiffnessMatrix, tStep);
-    double fac = pow( this->designVarList.at(el->giveNumber()), this->penalty);
+   // Ke.printYourself();
+    
+    double fac = pow( this->designVarList.at(elNum), this->penalty);
     el->computeVectorOf(EID_MomentumBalance, VM_Total, tStep, ae);
     help.beProductOf(Ke,ae);
    
     double cost = ae.dotProduct(help);
 
-    dc = -this->penalty * pow( this->designVarList.at(el->giveNumber()), this->penalty-1.0) * cost/fac;
+    dc = -this->penalty * pow( this->designVarList.at(elNum), this->penalty-1.0) * cost/fac;
 
-    this->sensitivityList.at( el->giveNumber() ) = dc;
+    this->sensitivityList.at( elNum ) = dc;
 
     return cost;
 }
@@ -404,6 +384,7 @@ StaticFracture :: optimalityCriteria(ObjectiveFunction *objFunc)
 {
     FloatArray &x = objFunc->designVarList; 
     FloatArray &dc = objFunc->sensitivityList;
+    ///x.printYourself();
 
     EngngModel *sp = this->giveSlaveProblem(1);
     Domain *d = sp->giveDomain(1);   
@@ -417,13 +398,11 @@ StaticFracture :: optimalityCriteria(ObjectiveFunction *objFunc)
     double averageDensity = 0.0;
 
     FloatArray xOld = x;
-    //FloatArray xOld = objFunc->designVarList;
     while (l2-l1 > 1.0e-4) {
         
         double lmid = 0.5*(l2+l1);
         double totalVolume = 0.0;
         double help = 0.0;
-        //for (int i = 1; i < x.giveSize(); i++) {
         for (int i = 1; i <= numEl; i++) { // should only be el that contribute
             Element *el = d->giveElement(i);
             // xnew = max(0.001,max(x-move,min(1.,min(x+move,x.*sqrt(-dc./lmid)))));
@@ -446,17 +425,53 @@ StaticFracture :: optimalityCriteria(ObjectiveFunction *objFunc)
         }
         averageDensity = help / totalVolume; 
 
-        //if ( averageDensity - objFunc->constraint > 0 ) {
-        if ( objFunc->designVarList.sum() - objFunc->constraint*20*20 > 0 ) {
+        if ( averageDensity - objFunc->constraint > 0 ) {
+        //if ( objFunc->designVarList.sum() - objFunc->constraint*20*20 > 0 ) {
             l1 = lmid;
         } else {
             l2 = lmid;
         }
     }
 
-
     printf("\n average density %e \n", averageDensity );
 }
+
+
+void
+StaticFracture :: filterSensitivities(ObjectiveFunction *objFunc)
+{
+    // Loop through all active elements and compute distance to neighbours
+
+    EngngModel *sp = this->giveSlaveProblem(1);
+    Domain *d = sp->giveDomain(1);   
+    int numEl = d->giveNumberOfElements(); 
+    double radius = 5.0;
+
+    FloatArray oldSensitivities = objFunc->sensitivityList;
+
+    // navie implementation
+    FloatArray center0, center, lCoords;
+    for (int i = 1; i <= numEl; i++) {
+        Element *el = d->giveElement(i);
+        lCoords.resize( el->giveSpatialDimension() );
+        lCoords.zero(); // center of element
+        
+        el->computeGlobalCoordinates(center0, lCoords);
+        double distSum = 0.0, help = 0.0;
+        for (int j = 1; j <= numEl; j++) {
+            d->giveElement(j)->computeGlobalCoordinates(center, lCoords);
+            double dist = sqrt( center0.distance_square(center) );
+            if ( dist <= radius ) {
+                distSum += dist;
+                help += oldSensitivities.at(j) * dist;
+            }
+            
+        }
+
+        objFunc->sensitivityList.at(i) = help / distSum; // new filtered sensitivity
+    }
+}
+
 
 void
 StaticFracture :: terminate(TimeStep *tStep)
