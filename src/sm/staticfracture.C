@@ -228,6 +228,7 @@ StaticFracture :: instanciateSlaveProblems()
     //the slave problem dictating time needs to have attribute master=NULL, other problems point to the dictating slave
     //slaveProb = oofem :: InstanciateProblem(& dr, this->pMode, this->contextOutputMode, this);
     slaveProb = oofem :: InstanciateProblem(& dr, this->pMode, this->contextOutputMode, NULL);
+
     emodelList->put(i, slaveProb);
    
     return 1;
@@ -262,6 +263,9 @@ StaticFracture :: solveYourself()
 
             
             sp->solveYourself();
+            //LinearStatic *ls = dynamic_cast<LinearStatic * > (sp);
+            //FloatArray u = ls->displacementVector;
+            //u.printYourself();
 
             this->updateYourself( this->giveCurrentStep());
             
@@ -274,18 +278,12 @@ StaticFracture :: solveYourself()
             this->optimize( this->giveCurrentStep() );    
 
 
-            
-
-            if ( tStepNum > 0) {
-                TimeStep *tStep =  sp->giveCurrentStep();
-
-                tStep->setNumber(tStepNum); 
-                sp->giveExportModuleManager()->doOutput(tStep);
-
-
-                tStep->setNumber(0); 
-            }
-
+            TimeStep *tStep =  sp->giveCurrentStep();
+              
+            tStep->setNumber(tStepNum); 
+            sp->giveExportModuleManager()->doOutput(tStep);
+            tStep->setNumber(0); 
+                
         }
     }
     
@@ -330,30 +328,22 @@ StaticFracture :: optimize(TimeStep *tStep)
         
         EngngModel *sp = this->giveSlaveProblem(subProb);
         Domain *d = sp->giveDomain(1);   
-        int numMat = d->giveNumberOfMaterialModels();
-
 
         double cost = 0.0;
-        int numEl = d->giveNumberOfElements(); 
-
         double dce = 0.0;
-        for (int i = 1; i <= numEl; i++) {
-            
+        for (int i = 1; i <= d->giveNumberOfElements(); i++) {  
             Element *el = d->giveElement(i);
             cost += objFunc->evaluateYourself(el, dce, sp->giveCurrentStep() ); // add cost for each element
-            objFunc->sensitivityList.at(i) = dce; // save derivative of cost function
-
+            //objFunc->sensitivityList.at(i) = dce; // save derivative of cost function
         }
         
-        // Update design variables based on some method. For now use the 'standard' optimality
-        // criteria
-        this->optimalityCriteria(objFunc);
 
-        
-        objFunc->designVarList.printYourself();
+        // Update design variables based on some method. For now use the 'standard' optimality criteria
+        this->optimalityCriteria(objFunc);
+     
 
         // Update material parameters
-        for (int i = 1; i <= numMat; i++) {
+        for (int i = 1; i <= d->giveNumberOfMaterialModels(); i++) {
             DynamicInputRecord ir;
             Material *mat = d->giveMaterial(i);
             mat->giveInputRecord(ir);
@@ -363,13 +353,14 @@ StaticFracture :: optimize(TimeStep *tStep)
             mat->initializeFrom(&ir);
             if (i==1)
             {
-                mat->printYourself();
+            //    mat->printYourself();
             }
         }
 
         //objFunc->designVarList.printYourself();
     
-        printf("\n costfunction %e and sum design %e \n \n", cost, objFunc->designVarList.sum());
+        printf("\n costfunction %e & sum sensitivity %e & sum x %e \n", cost, objFunc->sensitivityList.sum(), 
+            objFunc->designVarList.sum() );
 
     }
 }
@@ -394,9 +385,13 @@ MinCompliance :: evaluateYourself(Element *el, double &dc, TimeStep *tStep)
     double fac = pow( this->designVarList.at(el->giveNumber()), this->penalty);
     el->computeVectorOf(EID_MomentumBalance, VM_Total, tStep, ae);
     help.beProductOf(Ke,ae);
-    
+   
     double cost = ae.dotProduct(help);
-    dc = -this->penalty * pow( designVarList.at(el->giveNumber()), this->penalty-1.0) * cost/fac;
+
+    dc = -this->penalty * pow( this->designVarList.at(el->giveNumber()), this->penalty-1.0) * cost/fac;
+
+    this->sensitivityList.at( el->giveNumber() ) = dc;
+
     return cost;
 }
 
@@ -419,8 +414,10 @@ StaticFracture :: optimalityCriteria(ObjectiveFunction *objFunc)
     double l1 = 0; 
     double l2 = 100000; 
     double move = 0.2;
+    double averageDensity = 0.0;
 
     FloatArray xOld = x;
+    //FloatArray xOld = objFunc->designVarList;
     while (l2-l1 > 1.0e-4) {
         
         double lmid = 0.5*(l2+l1);
@@ -430,7 +427,8 @@ StaticFracture :: optimalityCriteria(ObjectiveFunction *objFunc)
         for (int i = 1; i <= numEl; i++) { // should only be el that contribute
             Element *el = d->giveElement(i);
             // xnew = max(0.001,max(x-move,min(1.,min(x+move,x.*sqrt(-dc./lmid)))));
-            double temp1 = max(0.001, max(xOld.at(i)-move, min(1., min(xOld.at(i) + move, xOld.at(i) * sqrt(-dc.at(i)/lmid) ) )));
+            double xe = max(0.001, max(xOld.at(i)-move, min(1., min(xOld.at(i) + move, xOld.at(i) * sqrt(-dc.at(i)/lmid) ) )));
+            //double xe = max(0.001, max(xOld.at(i)-move, min(1., min(xOld.at(i) + move, xOld.at(i) * sqrt(-objFunc->sensitivityList.at(i)/lmid) ) )));
             //double temp1 = x.at(i) + move;
         //double temp2 = x.at(i) * sqrt(-dc.at(i)/lmid);
         //double temp3 = min(temp1, temp2);
@@ -440,20 +438,24 @@ StaticFracture :: optimalityCriteria(ObjectiveFunction *objFunc)
         //temp1 = max(0.001,temp3);
         ////designVarList.at(i) = max(0.001, max(x-move, min(1., min(x+move,x.*sqrt(-dCostFunction.at(i)/lmid)))));
             
-            x.at(i) = temp1;
+            x.at(i) = xe;
+            //objFunc->designVarList.at(i) = xe;
             double dV = el->computeVolumeAreaOrLength();
             totalVolume += dV;
-            help += temp1 * dV; 
+            help += xe * dV; 
         }
-        double averageDensity = help / totalVolume; 
-        
-        if ( averageDensity - objFunc->constraint > 0 ) {
+        averageDensity = help / totalVolume; 
+
+        //if ( averageDensity - objFunc->constraint > 0 ) {
+        if ( objFunc->designVarList.sum() - objFunc->constraint*20*20 > 0 ) {
             l1 = lmid;
         } else {
             l2 = lmid;
         }
     }
 
+
+    printf("\n average density %e \n", averageDensity );
 }
 
 void

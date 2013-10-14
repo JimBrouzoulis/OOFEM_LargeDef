@@ -48,6 +48,7 @@
 #include "enrichmentitem.h"
 #include "enrichmentdomain.h"
 #include "nlinearstatic.h"
+#include "staticfracture.h"
 
 #include <string>
 #include <sstream>
@@ -1659,7 +1660,7 @@ VTKXMLExportModule :: exportCellVarAs(InternalStateType type, int region,
             continue;
         }
 #endif
-        NonLinearStatic *test;
+        StaticFracture *test;
         switch ( type ) {
 
         // Special scalars
@@ -1677,11 +1678,12 @@ VTKXMLExportModule :: exportCellVarAs(InternalStateType type, int region,
             }
             break;
         case IST_DesignDensity:
-            //valueArray.at(1) = elem->giveMaterial()->give(Youngs,NULL);
+            valueArray.at(1) = elem->giveMaterial()->give(Youngs,NULL);
             
-            test =   dynamic_cast< NonLinearStatic *> ( elem->giveDomain()->giveEngngModel() );
-            //valueArray.at(1) = test->designVarList.at( elem->giveNumber() );
-            valueArray.at(1) = 0.0;
+            //test =   dynamic_cast< StaticFracture *> ( elem->giveDomain()->giveEngngModel()->giveMasterEngngModel() );
+            //valueArray.at(1) = test->objFuncList[0]->designVarList.at( elem->giveNumber() );
+            //valueArray.at(1) = test>designVarList.at( elem->giveNumber() );
+            //valueArray.at(1) = 0.0;
             break;
 
            
